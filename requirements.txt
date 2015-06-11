@@ -1,0 +1,2 @@
+-e git://github.com/liamks/pyitunes.git#egg=pyItunes
+gmusicapi
