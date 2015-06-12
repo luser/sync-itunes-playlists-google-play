@@ -17,6 +17,12 @@ from collections import defaultdict
 import requests.packages.urllib3
 requests.packages.urllib3.disable_warnings()
 
+verbose = False
+
+def log(*args, **kwargs):
+    if verbose:
+        print(*args, **kwargs)
+
 def get_track_ids(db, tracks):
     '''
     Return a list of server ids for each track in tracks.
@@ -32,10 +38,10 @@ def index(l, f):
 
 def create_playlist(api, db, playlist):
     track_ids = get_track_ids(db, playlist.tracks)
-    print('Playlist "%s": %d songs' % (playlist.name, len(playlist.tracks)))
+    log('Playlist "%s": %d songs' % (playlist.name, len(playlist.tracks)))
     playlist_id = api.create_playlist(playlist.name)
     added_songs = api.add_songs_to_playlist(playlist_id, track_ids)
-    print('Added %d songs' % len(added_songs))
+    log('Added %d songs' % len(added_songs))
 
 def sync_playlist(api, db, playlist, google_playlists):
     if playlist.name not in google_playlists:
@@ -47,25 +53,25 @@ def sync_playlist(api, db, playlist, google_playlists):
     # First, remove tracks from the list.
     track_ids = get_track_ids(db, playlist.tracks)
     existing_track_ids = [t['trackId'] for t in google_playlist['tracks']]
-    print('Playlist "%s": %d songs in iTunes, %d in Google Play Music' % (playlist.name, len(track_ids), len(existing_track_ids)))
+    log('Playlist "%s": %d songs in iTunes, %d in Google Play Music' % (playlist.name, len(track_ids), len(existing_track_ids)))
     if track_ids == existing_track_ids:
-        print('Nothing to do')
+        log('Nothing to do')
         return
     tracks_to_remove = set(existing_track_ids) - set(track_ids)
     if tracks_to_remove:
-        print('Removing %d songs' % len(tracks_to_remove))
+        log('Removing %d songs' % len(tracks_to_remove))
         entry_ids = [e['id'] for e in google_playlist['tracks'] if e['trackId'] in tracks_to_remove]
         api.remove_entries_from_playlist(entry_ids)
         existing_track_ids = [i for i in existing_track_ids if i not in tracks_to_remove]
     # Next, add tracks to the list.
     tracks_to_add = set(track_ids) - set(existing_track_ids)
     if tracks_to_add:
-        print('Adding %d songs' % len(tracks_to_add))
+        log('Adding %d songs' % len(tracks_to_add))
         added_songs = api.add_songs_to_playlist(playlist_id, list(tracks_to_add))
         existing_track_ids.extend(added_songs)
     # Finally, reorder the list in Google Play to match the one in iTunes if necessary.
     if track_ids != existing_track_ids:
-        print('Reordering songs')
+        log('Reordering songs')
         if tracks_to_add:
             # We need to refresh the playlist first.
             all_google_playlists = api.get_all_user_playlist_contents()
@@ -84,7 +90,7 @@ def sync_playlist(api, db, playlist, google_playlists):
                 precede_entry = None if i2 == len(tracks) else tracks[i2]
                 for track_id in track_ids[j1:j2]:
                     entry = entries_by_id[track_id].pop(0)
-                    print('Moving %s after %s and before %s' % (names_by_id[track_id], 'nothing' if follow_entry is None else names_by_id[follow_entry['trackId']], 'nothing' if precede_entry is None else names_by_id[precede_entry['trackId']]))
+                    log('Moving %s after %s and before %s' % (names_by_id[track_id], 'nothing' if follow_entry is None else names_by_id[follow_entry['trackId']], 'nothing' if precede_entry is None else names_by_id[precede_entry['trackId']]))
                     api.reorder_playlist_entry(entry, to_follow_entry=follow_entry, to_precede_entry=precede_entry)
                     follow_entry = entry
 
@@ -94,10 +100,14 @@ def main():
                         help='Path to iTunes Music Library.xml')
     parser.add_argument('google_music_manager_db', type=str,
                         help='Path to Google Music Manager ServerDatabase.db')
+    parser.add_argument('--verbose', action='store_true', default=False,
+                        help='Print verbose output')
     parser.add_argument('playlists', type=str, nargs='*',
                         metavar='playlist',
                         help='Names of playlists to sync')
     args = parser.parse_args()
+    global verbose
+    verbose = args.verbose
     lib = pyItunes.Library(args.itunes_music_library)
     known_itunes_playlists = lib.getPlaylistNames()
     if args.playlists:
@@ -107,7 +117,7 @@ def main():
             print('''Error: these playlists aren't in your iTunes Library:
 %s
 ''' % (sorted(not_found), ))
-            return
+            return 1
     else:
         itunes_playlists = known_itunes_playlists
 
@@ -120,7 +130,7 @@ def main():
         api = Mobileclient()
         if not api.login(username, password):
             print('Error: unable to login', file=sys.stderr)
-            return
+            return 1
         all_google_playlists = api.get_all_user_playlist_contents()
         google_playlists = {p['name']: p for p in all_google_playlists}
         for name in itunes_playlists:
@@ -129,6 +139,7 @@ def main():
     finally:
         if api:
             api.logout()
+    return 0
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
